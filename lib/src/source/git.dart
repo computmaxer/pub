@@ -45,8 +45,10 @@ class GitSource extends CachedSource {
   /// Anything that Version.parse understands is considered a version,
   /// it will also attempt to strip off a preceding 'v' e.g. v1.0.0
   Future<List<Pubspec>> getVersions(String name, description) async {
+    print('PACKAGE DESCRIPTION: $description');
     PackageId id = new PackageId(name, null, null, _getDescription(description));
     await downloadToSystemCache(id);
+    print('PACKAGE VERSION: ${id.version.toString()}');
     List results = await git.run(["tag", "-l"], workingDir: _repoCachePath(id));
     List<Pubspec> validVersions = [];
     results.forEach((String version) {
@@ -60,8 +62,10 @@ class GitSource extends CachedSource {
       } on FormatException {}
     });
     if (validVersions.length > 0) {
+      print('Returning the following valid versions: $validVersions');
       return validVersions;
     }
+    print('No valid versions found. returning super');
     return super.getVersions(name, description);
   }
 
@@ -172,6 +176,7 @@ class GitSource extends CachedSource {
 
   /// Attaches a specific commit to [id] to disambiguate it.
   Future<PackageId> resolveId(PackageId id) {
+    print("RESOLVE ${id.version.toString()}");
     return _ensureRevision(id).then((revision) {
       var description = {'url': _getUrl(id), 'ref': _getRef(id)};
       description['resolved-ref'] = revision;
@@ -279,8 +284,15 @@ class GitSource extends CachedSource {
   ///
   /// This assumes that the canonical clone already exists.
   Future<String> _getRev(PackageId id) {
-    return git.run(["rev-list", "--max-count=1", _getEffectiveRef(id)],
-        workingDir: _repoCachePath(id)).then((result) => result.first);
+    var ref = _getEffectiveRef(id);
+    return git.run(["rev-list", "--max-count=1", ref],
+        workingDir: _repoCachePath(id)).then((result) => result.first).catchError((_) {
+      if (ref == id.version.toString()) {
+        ref = 'v$ref';
+      }
+      return git.run(["rev-list", "--max-count=1", ref],
+      workingDir: _repoCachePath(id)).then((result) => result.first);
+    });
   }
 
   /// Clones the repo at the URI [from] to the path [to] on the local
@@ -296,6 +308,7 @@ class GitSource extends CachedSource {
   Future _clone(String from, String to, {bool mirror: false,
       bool shallow: false}) {
     return new Future.sync(() {
+      print("CLONING");
       // Git on Windows does not seem to automatically create the destination
       // directory.
       ensureDir(to);
@@ -340,12 +353,14 @@ class GitSource extends CachedSource {
   /// [description] may be a description or a [PackageId].
   String _getEffectiveRef(PackageId id) {
     Map description = _getDescription(id);
+//    print('EFFECTIVE REF DESCRIPTION: ${description}');
     if (description is Map && description.containsKey('resolved-ref')) {
       return description['resolved-ref'];
     }
 
     var ref = _getRef(description);
     if (ref == null && id.version != null && id.version != Version.none) {
+      print('Returning version string for ref in package: ${id.name}. Version is ${id.version.toString()}. Ref is $ref');
       return id.version.toString();
     }
     return ref == null ? 'HEAD' : ref;
